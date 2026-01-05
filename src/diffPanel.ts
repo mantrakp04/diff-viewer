@@ -86,19 +86,9 @@ export class DiffPanel {
     const uri = vscode.Uri.file(fullPath);
 
     try {
-      const gitUri = uri.with({
-        scheme: 'git',
-        query: JSON.stringify({ path: fullPath, ref: this.currentBranch }),
-      });
-
-      await vscode.commands.executeCommand(
-        'vscode.diff',
-        gitUri,
-        uri,
-        `${filePath} (${this.currentBranch} vs Current)`
-      );
-    } catch {
       await vscode.window.showTextDocument(uri);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Could not open file: ${filePath}`);
     }
   }
 
@@ -137,11 +127,11 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
             <div class="diff-content split-view" style="display:none">
               <div class="split-pane">
                 <div class="pane-header">${this.escapeHtml(this.currentBranch)}</div>
-                <div class="pane-scroll">${leftHtml}</div>
+                <div class="pane-scroll"><div class="diff-lines">${leftHtml}</div></div>
               </div>
               <div class="split-pane">
                 <div class="pane-header">Current</div>
-                <div class="pane-scroll">${rightHtml}</div>
+                <div class="pane-scroll"><div class="diff-lines">${rightHtml}</div></div>
               </div>
             </div>
           </div>
@@ -305,21 +295,21 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
 
     /* Inline view */
     .inline-view { overflow-x: auto; }
-    .inline-view .diff-table { width: 100%; border-collapse: collapse; min-width: max-content; }
-    .inline-view .diff-line { display: table-row; }
+    .inline-view .diff-table { display: flex; flex-direction: column; width: max-content; min-width: 100%; }
+    .inline-view .diff-line { display: flex; width: 100%; }
     .inline-view .diff-line.add { background: rgba(63, 185, 80, 0.15); }
     .inline-view .diff-line.del { background: rgba(248, 81, 73, 0.15); }
     .inline-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
     .inline-view .line-num {
-      display: table-cell;
-      width: 50px; min-width: 50px; padding: 0 8px;
+      width: 40px; min-width: 40px; padding: 0 4px;
       text-align: right; color: var(--vscode-editorLineNumber-foreground);
-      user-select: none; border-right: 1px solid var(--vscode-widget-border);
-      font-size: 11px; vertical-align: top;
+      user-select: none; font-size: 11px; flex-shrink: 0;
+    }
+    .inline-view .line-num:last-of-type {
+      border-right: 1px solid var(--vscode-widget-border);
     }
     .inline-view .line-content {
-      display: table-cell;
-      padding: 0 12px; white-space: pre;
+      flex: 1; padding: 0 12px; white-space: pre;
     }
 
     /* Side-by-side view */
@@ -340,19 +330,29 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     }
     .split-pane .pane-scroll {
       overflow-x: auto;
+      display: flex;
+      flex-direction: column;
     }
-    .split-view .diff-line { display: flex; min-height: 20px; }
+    .split-pane .diff-lines { display: flex; flex-direction: column; width: max-content; min-width: 100%; }
+    .split-view .diff-line { display: flex; min-height: 20px; width: 100%; }
     .split-view .diff-line.add { background: rgba(63, 185, 80, 0.15); }
     .split-view .diff-line.del { background: rgba(248, 81, 73, 0.15); }
     .split-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
     .split-view .diff-line.empty { background: rgba(128,128,128,0.05); }
     .split-view .line-num {
-      width: 45px; min-width: 45px; padding: 0 8px;
+      width: 40px; min-width: 40px; padding: 0 4px;
       text-align: right; color: var(--vscode-editorLineNumber-foreground);
       user-select: none; font-size: 11px; flex-shrink: 0;
     }
+    .split-view .line-indicator {
+      width: 16px; min-width: 16px; padding: 0 2px;
+      text-align: center; font-size: 11px; flex-shrink: 0;
+      font-weight: bold;
+    }
+    .split-view .diff-line.add .line-indicator { color: #3fb950; }
+    .split-view .diff-line.del .line-indicator { color: #f85149; }
     .split-view .line-content {
-      flex: 1; padding: 0 12px; white-space: pre;
+      flex: 1; padding: 0 8px; white-space: pre;
     }
 
     .no-diff { padding: 16px; text-align: center; color: var(--vscode-descriptionForeground); }
@@ -502,10 +502,12 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
           <span class="line-content">${this.escapeHtml(line)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
-        rightHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        leftHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        rightHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
         continue;
       }
+
+      const contentWithoutPrefix = line.length > 0 ? line.substring(1) : '';
 
       if (line.startsWith('+')) {
         inlineHtml += `<div class="diff-line add">
@@ -513,8 +515,8 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
           <span class="line-content">${this.escapeHtml(line)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-content"></span></div>`;
-        rightHtml += `<div class="diff-line add"><span class="line-num">${newLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        leftHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content"></span></div>`;
+        rightHtml += `<div class="diff-line add"><span class="line-num">${newLine}</span><span class="line-indicator">+</span><span class="line-content">${this.escapeHtml(contentWithoutPrefix)}</span></div>`;
         newLine++;
       } else if (line.startsWith('-')) {
         inlineHtml += `<div class="diff-line del">
@@ -522,17 +524,18 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
           <span class="line-content">${this.escapeHtml(line)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line del"><span class="line-num">${oldLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
-        rightHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-content"></span></div>`;
+        leftHtml += `<div class="diff-line del"><span class="line-num">${oldLine}</span><span class="line-indicator">-</span><span class="line-content">${this.escapeHtml(contentWithoutPrefix)}</span></div>`;
+        rightHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content"></span></div>`;
         oldLine++;
       } else if (line.length > 0) {
+        const contextContent = line.startsWith(' ') ? line.substring(1) : line;
         inlineHtml += `<div class="diff-line">
           <span class="line-num">${oldLine}</span><span class="line-num">${newLine}</span>
-          <span class="line-content">${this.escapeHtml(line)}</span>
+          <span class="line-content">${this.escapeHtml(contextContent)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line"><span class="line-num">${oldLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
-        rightHtml += `<div class="diff-line"><span class="line-num">${newLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        leftHtml += `<div class="diff-line"><span class="line-num">${oldLine}</span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(contextContent)}</span></div>`;
+        rightHtml += `<div class="diff-line"><span class="line-num">${newLine}</span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(contextContent)}</span></div>`;
         oldLine++;
         newLine++;
       }
