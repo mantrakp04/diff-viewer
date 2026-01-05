@@ -35,8 +35,12 @@ jobs:
       - name: Package extension
         run: bunx vsce package
 
+      - name: Find VSIX file
+        id: find-vsix
+        run: echo "vsix_file=$(ls *.vsix)" >> $GITHUB_OUTPUT
+
       - name: Publish to Open VSX
         uses: HaaLeo/publish-vscode-extension@v2
         with:
           pat: ${{ secrets.OPEN_VSX_TOKEN }}
-          extensionFile: '*.vsix'
+          extensionFile: ${{ steps.find-vsix.outputs.vsix_file }}
