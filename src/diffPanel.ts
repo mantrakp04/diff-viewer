@@ -127,11 +127,11 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
             <div class="diff-content split-view" style="display:none">
               <div class="split-pane">
                 <div class="pane-header">${this.escapeHtml(this.currentBranch)}</div>
-                <div class="pane-scroll">${leftHtml}</div>
+                <div class="pane-scroll"><div class="diff-lines">${leftHtml}</div></div>
               </div>
               <div class="split-pane">
                 <div class="pane-header">Current</div>
-                <div class="pane-scroll">${rightHtml}</div>
+                <div class="pane-scroll"><div class="diff-lines">${rightHtml}</div></div>
               </div>
             </div>
           </div>
@@ -295,23 +295,21 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
 
     /* Inline view */
     .inline-view { overflow-x: auto; }
-    .inline-view .diff-table { width: 100%; border-collapse: collapse; min-width: max-content; }
-    .inline-view .diff-line { display: table-row; }
+    .inline-view .diff-table { display: flex; flex-direction: column; width: max-content; min-width: 100%; }
+    .inline-view .diff-line { display: flex; width: 100%; }
     .inline-view .diff-line.add { background: rgba(63, 185, 80, 0.15); }
     .inline-view .diff-line.del { background: rgba(248, 81, 73, 0.15); }
     .inline-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
     .inline-view .line-num {
-      display: table-cell;
       width: 40px; min-width: 40px; padding: 0 4px;
       text-align: right; color: var(--vscode-editorLineNumber-foreground);
-      user-select: none; font-size: 11px; vertical-align: top;
+      user-select: none; font-size: 11px; flex-shrink: 0;
     }
     .inline-view .line-num:last-of-type {
       border-right: 1px solid var(--vscode-widget-border);
     }
     .inline-view .line-content {
-      display: table-cell;
-      padding: 0 12px; white-space: pre;
+      flex: 1; padding: 0 12px; white-space: pre;
     }
 
     /* Side-by-side view */
@@ -332,8 +330,11 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     }
     .split-pane .pane-scroll {
       overflow-x: auto;
+      display: flex;
+      flex-direction: column;
     }
-    .split-view .diff-line { display: flex; min-height: 20px; }
+    .split-pane .diff-lines { display: flex; flex-direction: column; width: max-content; min-width: 100%; }
+    .split-view .diff-line { display: flex; min-height: 20px; width: 100%; }
     .split-view .diff-line.add { background: rgba(63, 185, 80, 0.15); }
     .split-view .diff-line.del { background: rgba(248, 81, 73, 0.15); }
     .split-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
