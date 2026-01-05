@@ -8,10 +8,12 @@ export class DiffPanel {
   private readonly gitService: GitService;
   private disposables: vscode.Disposable[] = [];
   private currentBranch: string = '';
+  private inlineEditingEnabled: boolean = false;
 
   private constructor(panel: vscode.WebviewPanel, gitService: GitService) {
     this.panel = panel;
     this.gitService = gitService;
+    this.inlineEditingEnabled = this.getInlineEditingSetting();
 
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
@@ -24,11 +26,25 @@ export class DiffPanel {
           case 'refresh':
             await this.refresh();
             break;
+          case 'toggleInlineEditing':
+            this.inlineEditingEnabled = message.enabled;
+            await this.saveInlineEditingSetting(message.enabled);
+            break;
         }
       },
       null,
       this.disposables
     );
+  }
+
+  private getInlineEditingSetting(): boolean {
+    const config = vscode.workspace.getConfiguration('diffViewer');
+    return config.get<boolean>('inlineEditing', false);
+  }
+
+  private async saveInlineEditingSetting(enabled: boolean): Promise<void> {
+    const config = vscode.workspace.getConfiguration('diffViewer');
+    await config.update('inlineEditing', enabled, vscode.ConfigurationTarget.Global);
   }
 
   public static async createOrShow(gitService: GitService, branch: string): Promise<DiffPanel> {
@@ -231,6 +247,27 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
     }
+    .edit-toggle {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; font-size: 11px;
+      color: var(--vscode-foreground);
+    }
+    .edit-toggle input[type="checkbox"] {
+      width: 14px; height: 14px;
+      accent-color: var(--vscode-button-background);
+      cursor: pointer;
+    }
+    .toggle-label { user-select: none; }
+    .line-content[contenteditable="true"] {
+      outline: none;
+      border-radius: 2px;
+    }
+    .line-content[contenteditable="true"]:focus {
+      background: var(--vscode-editor-selectionBackground);
+    }
+    .line-content[contenteditable="true"]:hover {
+      background: rgba(255,255,255,0.05);
+    }
     .toc { flex: 1; overflow-y: auto; padding: 8px 0; }
     .toc-item {
       display: flex; align-items: center; gap: 8px;
@@ -377,6 +414,12 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
             <button class="view-toggle" data-view="split">Side by Side</button>
             <button class="refresh-btn" onclick="refresh()">Refresh</button>
           </div>
+          <div class="btn-row" style="margin-top: 6px;">
+            <label class="edit-toggle">
+              <input type="checkbox" id="inlineEditingToggle" ${this.inlineEditingEnabled ? 'checked' : ''}>
+              <span class="toggle-label">Inline Editing</span>
+            </label>
+          </div>
         </div>
         <div class="toc">${tocItems}</div>
       </div>
@@ -470,6 +513,30 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     });
 
     function refresh() { vscode.postMessage({ command: 'refresh' }); }
+
+    // Inline editing toggle
+    const inlineEditingToggle = document.getElementById('inlineEditingToggle');
+    let inlineEditingEnabled = ${this.inlineEditingEnabled};
+
+    function updateEditableState() {
+      const lineContents = document.querySelectorAll('.line-content');
+      lineContents.forEach(el => {
+        if (inlineEditingEnabled) {
+          el.setAttribute('contenteditable', 'true');
+        } else {
+          el.removeAttribute('contenteditable');
+        }
+      });
+    }
+
+    // Initialize editable state
+    updateEditableState();
+
+    inlineEditingToggle.addEventListener('change', (e) => {
+      inlineEditingEnabled = e.target.checked;
+      updateEditableState();
+      vscode.postMessage({ command: 'toggleInlineEditing', enabled: inlineEditingEnabled });
+    });
   </script>
 </body>
 </html>`;
