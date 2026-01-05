@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 
 const execAsync = promisify(exec);
+const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
 
 export interface DiffResult {
   file: string;
@@ -60,7 +61,7 @@ export class GitService {
 
   async getDiffSummary(branch: string): Promise<DiffResult[]> {
     try {
-      const { stdout } = await execAsync(`git diff --numstat ${branch}...HEAD`, {
+      const { stdout } = await execAsync(`git diff --numstat ${shellEscape(branch)}`, {
         cwd: this.workspaceRoot,
       });
 
@@ -84,7 +85,7 @@ export class GitService {
       }
 
       // Get status for more accurate info
-      const { stdout: statusOutput } = await execAsync(`git diff --name-status ${branch}...HEAD`, {
+      const { stdout: statusOutput } = await execAsync(`git diff --name-status ${shellEscape(branch)}`, {
         cwd: this.workspaceRoot,
       });
 
@@ -119,13 +120,14 @@ export class GitService {
   }
 
   async getFileDiff(branch: string, filePath: string): Promise<FileDiff> {
-    const relativePath = path.relative(this.workspaceRoot, filePath);
+    const relativePath = path.isAbsolute(filePath)
+      ? path.relative(this.workspaceRoot, filePath)
+      : filePath;
 
     try {
-      // Get old content from branch
       let oldContent = '';
       try {
-        const { stdout } = await execAsync(`git show ${branch}:${relativePath}`, {
+        const { stdout } = await execAsync(`git show ${shellEscape(`${branch}:${relativePath}`)}`, {
           cwd: this.workspaceRoot,
           maxBuffer: 10 * 1024 * 1024,
         });
@@ -134,34 +136,42 @@ export class GitService {
         oldContent = '';
       }
 
-      // Get current content
       let newContent = '';
       try {
-        const { stdout } = await execAsync(`git show HEAD:${relativePath}`, {
+        const { stdout } = await execAsync(`git show ${shellEscape(`HEAD:${relativePath}`)}`, {
           cwd: this.workspaceRoot,
           maxBuffer: 10 * 1024 * 1024,
         });
         newContent = stdout;
       } catch {
-        // File might be new, read from disk
         try {
-          const doc = await vscode.workspace.openTextDocument(filePath);
+          const fullPath = path.isAbsolute(filePath)
+            ? filePath
+            : path.join(this.workspaceRoot, filePath);
+          const doc = await vscode.workspace.openTextDocument(fullPath);
           newContent = doc.getText();
         } catch {
           newContent = '';
         }
       }
 
-      // Get unified diff
       let diff = '';
       try {
-        const { stdout } = await execAsync(`git diff ${branch}...HEAD -- ${relativePath}`, {
+        const { stdout } = await execAsync(`git diff ${shellEscape(branch)} -- ${shellEscape(relativePath)}`, {
           cwd: this.workspaceRoot,
           maxBuffer: 10 * 1024 * 1024,
         });
         diff = stdout;
       } catch {
-        diff = '';
+        try {
+          const { stdout } = await execAsync(`git diff ${shellEscape(`${branch}...HEAD`)} -- ${shellEscape(relativePath)}`, {
+            cwd: this.workspaceRoot,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          diff = stdout;
+        } catch {
+          diff = '';
+        }
       }
 
       return { oldContent, newContent, diff };
@@ -172,7 +182,7 @@ export class GitService {
 
   async getAllChangedFiles(branch: string): Promise<string[]> {
     try {
-      const { stdout } = await execAsync(`git diff --name-only ${branch}...HEAD`, {
+      const { stdout } = await execAsync(`git diff --name-only ${shellEscape(branch)}`, {
         cwd: this.workspaceRoot,
       });
       return stdout.split('\n').filter((f) => f.trim());
