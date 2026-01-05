@@ -531,7 +531,7 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
         const contextContent = line.startsWith(' ') ? line.substring(1) : line;
         inlineHtml += `<div class="diff-line">
           <span class="line-num">${oldLine}</span><span class="line-num">${newLine}</span>
-          <span class="line-content"> ${this.escapeHtml(contextContent)}</span>
+          <span class="line-content">${this.escapeHtml(contextContent)}</span>
         </div>`;
 
         leftHtml += `<div class="diff-line"><span class="line-num">${oldLine}</span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(contextContent)}</span></div>`;
