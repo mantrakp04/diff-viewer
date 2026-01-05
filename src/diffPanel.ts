@@ -391,12 +391,10 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     const collapseBtn = document.getElementById('collapseBtn');
     const resizeHandle = document.getElementById('resizeHandle');
 
-    // Sidebar collapse/expand
     collapseBtn.addEventListener('click', () => {
       sidebar.classList.toggle('collapsed');
     });
 
-    // Sidebar resize
     let isResizing = false;
     let startX, startWidth;
 
@@ -426,8 +424,6 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
       }
     });
 
-    // File header click - minimize/expand diff
-    // Alt+click = toggle all, regular click = toggle one
     document.querySelectorAll('.file-header').forEach(header => {
       header.addEventListener('click', (e) => {
         if (e.target.classList.contains('open-btn')) return;
@@ -435,7 +431,6 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
         const section = header.closest('.file-section');
 
         if (e.altKey) {
-          // Alt+click: toggle all
           const allSections = document.querySelectorAll('.file-section');
           const anyExpanded = [...allSections].some(s => !s.classList.contains('minimized'));
           allSections.forEach(s => {
@@ -446,13 +441,11 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
             }
           });
         } else {
-          // Regular click: toggle one
           section.classList.toggle('minimized');
         }
       });
     });
 
-    // Open button
     document.querySelectorAll('.open-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -461,7 +454,6 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
       });
     });
 
-    // View toggle
     document.querySelectorAll('.view-toggle').forEach(btn => {
       btn.addEventListener('click', () => {
         const view = btn.dataset.view;
