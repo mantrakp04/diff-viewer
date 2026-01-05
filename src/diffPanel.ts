@@ -61,8 +61,21 @@ export class DiffPanel {
 
   private async refresh(): Promise<void> {
     this.panel.title = `Diff: ${this.currentBranch}`;
+    this.panel.webview.html = this.getLoadingHtml();
+
     const diffResults = await this.gitService.getDiffSummary(this.currentBranch);
-    this.panel.webview.html = this.getHtml(diffResults);
+    const fileDiffs: { result: DiffResult; diff: string }[] = [];
+
+    for (const result of diffResults) {
+      try {
+        const { diff } = await this.gitService.getFileDiff(this.currentBranch, result.file);
+        fileDiffs.push({ result, diff });
+      } catch {
+        fileDiffs.push({ result, diff: '' });
+      }
+    }
+
+    this.panel.webview.html = this.getHtml(diffResults, fileDiffs);
   }
 
   private async openFileDiff(filePath: string): Promise<void> {
@@ -73,10 +86,6 @@ export class DiffPanel {
     const uri = vscode.Uri.file(fullPath);
 
     try {
-      // Use VS Code's built-in diff editor
-      const branchUri = vscode.Uri.parse(`git-diff:${this.currentBranch}:${filePath}`);
-
-      // Create a git URI for the old version
       const gitUri = uri.with({
         scheme: 'git',
         query: JSON.stringify({ path: fullPath, ref: this.currentBranch }),
@@ -89,29 +98,63 @@ export class DiffPanel {
         `${filePath} (${this.currentBranch} vs Current)`
       );
     } catch {
-      // Fallback: just open the file
       await vscode.window.showTextDocument(uri);
     }
   }
 
-  private getHtml(diffResults: DiffResult[]): string {
+  private getLoadingHtml(): string {
+    return `<!DOCTYPE html>
+<html><head><style>
+body { display: flex; justify-content: center; align-items: center; height: 100vh;
+  font-family: var(--vscode-font-family); color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background); margin: 0; }
+</style></head><body>Loading diffs...</body></html>`;
+  }
+
+  private getHtml(diffResults: DiffResult[], fileDiffs: { result: DiffResult; diff: string }[]): string {
     const totalAdditions = diffResults.reduce((sum, r) => sum + r.additions, 0);
     const totalDeletions = diffResults.reduce((sum, r) => sum + r.deletions, 0);
 
-    const fileRows = diffResults
-      .map((r) => {
-        const statusIcon = this.getStatusIcon(r.status);
-        const statusClass = r.status;
+    const fileSections = fileDiffs
+      .map(({ result, diff }, i) => {
+        const { inlineHtml, leftHtml, rightHtml } = this.parseDiff(diff);
         return `
-        <tr class="file-row" data-file="${this.escapeHtml(r.file)}">
-          <td class="status ${statusClass}">${statusIcon}</td>
-          <td class="filename">${this.escapeHtml(r.file)}</td>
-          <td class="additions">+${r.additions}</td>
-          <td class="deletions">-${r.deletions}</td>
-          <td class="bar">${this.getChangeBar(r.additions, r.deletions)}</td>
-        </tr>
-      `;
+        <div class="file-section" id="file-${i}">
+          <div class="file-header" data-file="${this.escapeHtml(result.file)}">
+            <div class="file-info">
+              <span class="collapse-icon">\u25BC</span>
+              <span class="status ${result.status}">${this.getStatusIcon(result.status)}</span>
+              <span class="filename">${this.escapeHtml(result.file)}</span>
+            </div>
+            <div class="file-stats">
+              <span class="add">+${result.additions}</span>
+              <span class="del">-${result.deletions}</span>
+              <button class="open-btn">Open</button>
+            </div>
+          </div>
+          <div class="diff-wrapper">
+            <div class="diff-content inline-view">${inlineHtml || '<div class="no-diff">No diff content</div>'}</div>
+            <div class="diff-content split-view" style="display:none">
+              <div class="split-pane">
+                <div class="pane-header">${this.escapeHtml(this.currentBranch)}</div>
+                <div class="pane-scroll">${leftHtml}</div>
+              </div>
+              <div class="split-pane">
+                <div class="pane-header">Current</div>
+                <div class="pane-scroll">${rightHtml}</div>
+              </div>
+            </div>
+          </div>
+        </div>`;
       })
+      .join('');
+
+    const tocItems = diffResults
+      .map((r, i) => `<a href="#file-${i}" class="toc-item">
+        <span class="status ${r.status}">${this.getStatusIcon(r.status)}</span>
+        <span class="toc-filename">${this.escapeHtml(r.file)}</span>
+        <span class="toc-stats"><span class="add">+${r.additions}</span><span class="del">-${r.deletions}</span></span>
+      </a>`)
       .join('');
 
     return `<!DOCTYPE html>
@@ -119,191 +162,403 @@ export class DiffPanel {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Branch Diff</title>
   <style>
+    * { box-sizing: border-box; }
     body {
       font-family: var(--vscode-font-family);
       color: var(--vscode-foreground);
       background: var(--vscode-editor-background);
-      padding: 16px;
-      margin: 0;
+      margin: 0; padding: 0;
     }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 16px;
-      padding-bottom: 12px;
+    .container { display: flex; height: 100vh; }
+
+    /* Sidebar */
+    .sidebar {
+      width: 280px; min-width: 44px;
+      border-right: 1px solid var(--vscode-widget-border);
+      display: flex; flex-direction: column;
+      flex-shrink: 0;
+      position: relative;
+      transition: width 0.15s ease;
+    }
+    .sidebar.collapsed { width: 44px !important; }
+    .sidebar.collapsed .sidebar-content { display: none; }
+    .sidebar.collapsed .collapse-btn { transform: rotate(180deg); }
+
+    .collapse-btn {
+      position: absolute; top: 8px; right: 8px;
+      width: 28px; height: 28px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none; border-radius: 4px;
+      cursor: pointer; font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 10; transition: transform 0.15s ease;
+    }
+    .collapse-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+
+    .resize-handle {
+      position: absolute; top: 0; right: 0;
+      width: 4px; height: 100%;
+      cursor: col-resize;
+      background: transparent;
+      z-index: 15;
+    }
+    .resize-handle:hover, .resize-handle.dragging {
+      background: var(--vscode-focusBorder);
+    }
+    .sidebar.collapsed .resize-handle { display: none; }
+
+    .sidebar-content { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+    .sidebar-header {
+      padding: 12px 16px;
+      padding-right: 44px;
       border-bottom: 1px solid var(--vscode-widget-border);
+      background: var(--vscode-editor-background);
     }
-    .header h2 {
-      margin: 0;
-      font-size: 18px;
+    .sidebar-header h2 { margin: 0 0 6px 0; font-size: 14px; }
+    .summary { font-size: 12px; color: var(--vscode-descriptionForeground); }
+    .summary .add { color: #3fb950; margin-left: 8px; }
+    .summary .del { color: #f85149; margin-left: 4px; }
+    .btn-row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+    .refresh-btn, .view-toggle {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none; padding: 4px 10px; border-radius: 3px;
+      cursor: pointer; font-size: 11px;
     }
-    .summary {
-      display: flex;
-      gap: 16px;
-      font-size: 13px;
-    }
-    .summary .additions { color: #3fb950; }
-    .summary .deletions { color: #f85149; }
-    .summary .files { color: var(--vscode-descriptionForeground); }
-    .refresh-btn {
+    .view-toggle.active {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
-      border: none;
-      padding: 6px 12px;
-      cursor: pointer;
-      border-radius: 4px;
     }
-    .refresh-btn:hover {
-      background: var(--vscode-button-hoverBackground);
+    .toc { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .toc-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 12px; text-decoration: none;
+      color: var(--vscode-foreground); font-size: 12px;
     }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
+    .toc-item:hover { background: var(--vscode-list-hoverBackground); }
+    .toc-filename {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--vscode-editor-font-family, monospace);
     }
-    th {
-      text-align: left;
-      padding: 8px;
+    .toc-stats { font-size: 11px; white-space: nowrap; }
+    .toc-stats .add { color: #3fb950; }
+    .toc-stats .del { color: #f85149; margin-left: 4px; }
+
+    /* Main content */
+    .main { flex: 1; overflow-y: auto; padding: 16px; min-width: 0; }
+
+    /* File sections */
+    .file-section {
+      margin-bottom: 24px;
+      border: 1px solid var(--vscode-widget-border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .file-section.minimized .diff-wrapper { display: none; }
+    .file-section.minimized .collapse-icon { transform: rotate(-90deg); }
+
+    .file-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 14px;
+      background: var(--vscode-editor-lineHighlightBackground, rgba(255,255,255,0.04));
       border-bottom: 1px solid var(--vscode-widget-border);
-      color: var(--vscode-descriptionForeground);
-      font-weight: 500;
-    }
-    .file-row {
       cursor: pointer;
+      user-select: none;
     }
-    .file-row:hover {
-      background: var(--vscode-list-hoverBackground);
+    .file-header:hover { background: var(--vscode-list-hoverBackground); }
+    .file-info { display: flex; align-items: center; gap: 8px; }
+    .collapse-icon {
+      font-size: 10px; transition: transform 0.15s ease;
+      color: var(--vscode-descriptionForeground);
     }
-    td {
-      padding: 6px 8px;
-      border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+    .file-info .filename {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 13px; font-weight: 500;
     }
-    .status {
-      width: 24px;
-      text-align: center;
+    .file-stats { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+    .file-stats .add { color: #3fb950; }
+    .file-stats .del { color: #f85149; }
+    .open-btn {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none; padding: 4px 10px; border-radius: 3px;
+      cursor: pointer; font-size: 11px;
     }
+    .open-btn:hover { background: var(--vscode-button-secondaryHoverBackground); }
+
+    /* Status icons */
+    .status { font-weight: bold; font-size: 11px; width: 16px; text-align: center; }
     .status.added { color: #3fb950; }
     .status.modified { color: #d29922; }
     .status.deleted { color: #f85149; }
     .status.renamed { color: #a371f7; }
-    .filename {
+
+    /* Diff wrapper */
+    .diff-wrapper { width: 100%; }
+    .diff-content {
       font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 12px; line-height: 1.4;
+      width: 100%;
     }
-    .additions {
-      color: #3fb950;
-      text-align: right;
-      width: 60px;
+
+    /* Inline view */
+    .inline-view { overflow-x: auto; }
+    .inline-view .diff-table { width: 100%; border-collapse: collapse; min-width: max-content; }
+    .inline-view .diff-line { display: table-row; }
+    .inline-view .diff-line.add { background: rgba(63, 185, 80, 0.15); }
+    .inline-view .diff-line.del { background: rgba(248, 81, 73, 0.15); }
+    .inline-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
+    .inline-view .line-num {
+      display: table-cell;
+      width: 50px; min-width: 50px; padding: 0 8px;
+      text-align: right; color: var(--vscode-editorLineNumber-foreground);
+      user-select: none; border-right: 1px solid var(--vscode-widget-border);
+      font-size: 11px; vertical-align: top;
     }
-    .deletions {
-      color: #f85149;
-      text-align: right;
-      width: 60px;
+    .inline-view .line-content {
+      display: table-cell;
+      padding: 0 12px; white-space: pre;
     }
-    .bar {
-      width: 120px;
+
+    /* Side-by-side view */
+    .split-view { display: flex; width: 100%; }
+    .split-pane {
+      flex: 1; width: 50%;
+      display: flex; flex-direction: column;
+      border-right: 1px solid var(--vscode-widget-border);
+      min-width: 0;
     }
-    .change-bar {
-      display: flex;
-      height: 8px;
-      border-radius: 2px;
-      overflow: hidden;
-    }
-    .change-bar .add {
-      background: #3fb950;
-    }
-    .change-bar .del {
-      background: #f85149;
-    }
-    .empty-state {
-      text-align: center;
-      padding: 48px;
+    .split-pane:last-child { border-right: none; }
+    .split-pane .pane-header {
+      padding: 4px 12px; font-size: 11px;
+      background: var(--vscode-editor-lineHighlightBackground);
       color: var(--vscode-descriptionForeground);
+      border-bottom: 1px solid var(--vscode-widget-border);
+      flex-shrink: 0;
     }
+    .split-pane .pane-scroll {
+      overflow-x: auto;
+    }
+    .split-view .diff-line { display: flex; min-height: 20px; }
+    .split-view .diff-line.add { background: rgba(63, 185, 80, 0.15); }
+    .split-view .diff-line.del { background: rgba(248, 81, 73, 0.15); }
+    .split-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
+    .split-view .diff-line.empty { background: rgba(128,128,128,0.05); }
+    .split-view .line-num {
+      width: 45px; min-width: 45px; padding: 0 8px;
+      text-align: right; color: var(--vscode-editorLineNumber-foreground);
+      user-select: none; font-size: 11px; flex-shrink: 0;
+    }
+    .split-view .line-content {
+      flex: 1; padding: 0 12px; white-space: pre;
+    }
+
+    .no-diff { padding: 16px; text-align: center; color: var(--vscode-descriptionForeground); }
+    .empty-state { text-align: center; padding: 48px; color: var(--vscode-descriptionForeground); }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div>
-      <h2>Changes from ${this.escapeHtml(this.currentBranch)}</h2>
-      <div class="summary">
-        <span class="files">${diffResults.length} files changed</span>
-        <span class="additions">+${totalAdditions}</span>
-        <span class="deletions">-${totalDeletions}</span>
+  <div class="container">
+    <div class="sidebar" id="sidebar">
+      <button class="collapse-btn" id="collapseBtn" title="Toggle sidebar">\u25C0</button>
+      <div class="resize-handle" id="resizeHandle"></div>
+      <div class="sidebar-content">
+        <div class="sidebar-header">
+          <h2>Changes from ${this.escapeHtml(this.currentBranch)}</h2>
+          <div class="summary">
+            ${diffResults.length} files
+            <span class="add">+${totalAdditions}</span>
+            <span class="del">-${totalDeletions}</span>
+          </div>
+          <div class="btn-row">
+            <button class="view-toggle active" data-view="inline">Inline</button>
+            <button class="view-toggle" data-view="split">Side by Side</button>
+            <button class="refresh-btn" onclick="refresh()">Refresh</button>
+          </div>
+        </div>
+        <div class="toc">${tocItems}</div>
       </div>
     </div>
-    <button class="refresh-btn" onclick="refresh()">Refresh</button>
+    <div class="main">
+      ${diffResults.length === 0 ? '<div class="empty-state">No changes found</div>' : fileSections}
+    </div>
   </div>
-
-  ${
-    diffResults.length === 0
-      ? '<div class="empty-state">No changes found</div>'
-      : `
-  <table>
-    <thead>
-      <tr>
-        <th></th>
-        <th>File</th>
-        <th style="text-align:right">+</th>
-        <th style="text-align:right">-</th>
-        <th>Changes</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${fileRows}
-    </tbody>
-  </table>
-  `
-  }
-
   <script>
     const vscode = acquireVsCodeApi();
+    const sidebar = document.getElementById('sidebar');
+    const collapseBtn = document.getElementById('collapseBtn');
+    const resizeHandle = document.getElementById('resizeHandle');
 
-    document.querySelectorAll('.file-row').forEach(row => {
-      row.addEventListener('click', () => {
-        const file = row.dataset.file;
+    // Sidebar collapse/expand
+    collapseBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
+    });
+
+    // Sidebar resize
+    let isResizing = false;
+    let startX, startWidth;
+
+    resizeHandle.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = sidebar.offsetWidth;
+      resizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      const diff = e.clientX - startX;
+      const newWidth = Math.max(150, Math.min(600, startWidth + diff));
+      sidebar.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+
+    // File header click - minimize/expand diff
+    // Alt+click = toggle all, regular click = toggle one
+    document.querySelectorAll('.file-header').forEach(header => {
+      header.addEventListener('click', (e) => {
+        if (e.target.classList.contains('open-btn')) return;
+
+        const section = header.closest('.file-section');
+
+        if (e.altKey) {
+          // Alt+click: toggle all
+          const allSections = document.querySelectorAll('.file-section');
+          const anyExpanded = [...allSections].some(s => !s.classList.contains('minimized'));
+          allSections.forEach(s => {
+            if (anyExpanded) {
+              s.classList.add('minimized');
+            } else {
+              s.classList.remove('minimized');
+            }
+          });
+        } else {
+          // Regular click: toggle one
+          section.classList.toggle('minimized');
+        }
+      });
+    });
+
+    // Open button
+    document.querySelectorAll('.open-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const file = btn.closest('.file-header').dataset.file;
         vscode.postMessage({ command: 'openFile', file });
       });
     });
 
-    function refresh() {
-      vscode.postMessage({ command: 'refresh' });
-    }
+    // View toggle
+    document.querySelectorAll('.view-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = btn.dataset.view;
+        document.querySelectorAll('.view-toggle').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        document.querySelectorAll('.inline-view').forEach(el => {
+          el.style.display = view === 'inline' ? 'block' : 'none';
+        });
+        document.querySelectorAll('.split-view').forEach(el => {
+          el.style.display = view === 'split' ? 'flex' : 'none';
+        });
+      });
+    });
+
+    function refresh() { vscode.postMessage({ command: 'refresh' }); }
   </script>
 </body>
 </html>`;
   }
 
-  private getStatusIcon(status: string): string {
-    switch (status) {
-      case 'added':
-        return 'A';
-      case 'modified':
-        return 'M';
-      case 'deleted':
-        return 'D';
-      case 'renamed':
-        return 'R';
-      default:
-        return '?';
+  private parseDiff(diff: string): { inlineHtml: string; leftHtml: string; rightHtml: string } {
+    if (!diff) return { inlineHtml: '', leftHtml: '', rightHtml: '' };
+
+    const lines = diff.split('\n');
+    let inlineHtml = '<div class="diff-table">';
+    let leftHtml = '';
+    let rightHtml = '';
+
+    let oldLine = 0;
+    let newLine = 0;
+
+    for (const line of lines) {
+      if (line.startsWith('diff --git') || line.startsWith('index ') ||
+          line.startsWith('---') || line.startsWith('+++')) {
+        continue;
+      }
+
+      const hunkMatch = line.match(/^@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
+      if (hunkMatch) {
+        oldLine = parseInt(hunkMatch[1], 10);
+        newLine = parseInt(hunkMatch[2], 10);
+
+        inlineHtml += `<div class="diff-line hunk">
+          <span class="line-num"></span><span class="line-num"></span>
+          <span class="line-content">${this.escapeHtml(line)}</span>
+        </div>`;
+
+        leftHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        rightHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        continue;
+      }
+
+      if (line.startsWith('+')) {
+        inlineHtml += `<div class="diff-line add">
+          <span class="line-num"></span><span class="line-num">${newLine}</span>
+          <span class="line-content">${this.escapeHtml(line)}</span>
+        </div>`;
+
+        leftHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-content"></span></div>`;
+        rightHtml += `<div class="diff-line add"><span class="line-num">${newLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        newLine++;
+      } else if (line.startsWith('-')) {
+        inlineHtml += `<div class="diff-line del">
+          <span class="line-num">${oldLine}</span><span class="line-num"></span>
+          <span class="line-content">${this.escapeHtml(line)}</span>
+        </div>`;
+
+        leftHtml += `<div class="diff-line del"><span class="line-num">${oldLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        rightHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-content"></span></div>`;
+        oldLine++;
+      } else if (line.length > 0) {
+        inlineHtml += `<div class="diff-line">
+          <span class="line-num">${oldLine}</span><span class="line-num">${newLine}</span>
+          <span class="line-content">${this.escapeHtml(line)}</span>
+        </div>`;
+
+        leftHtml += `<div class="diff-line"><span class="line-num">${oldLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        rightHtml += `<div class="diff-line"><span class="line-num">${newLine}</span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        oldLine++;
+        newLine++;
+      }
     }
+
+    inlineHtml += '</div>';
+
+    return { inlineHtml, leftHtml, rightHtml };
   }
 
-  private getChangeBar(additions: number, deletions: number): string {
-    const total = additions + deletions;
-    if (total === 0) return '';
-
-    const maxWidth = 100;
-    const scale = Math.min(1, maxWidth / total);
-    const addWidth = Math.round(additions * scale);
-    const delWidth = Math.round(deletions * scale);
-
-    return `<div class="change-bar">
-      <div class="add" style="width: ${addWidth}px"></div>
-      <div class="del" style="width: ${delWidth}px"></div>
-    </div>`;
+  private getStatusIcon(status: string): string {
+    switch (status) {
+      case 'added': return 'A';
+      case 'modified': return 'M';
+      case 'deleted': return 'D';
+      case 'renamed': return 'R';
+      default: return '?';
+    }
   }
 
   private escapeHtml(text: string): string {

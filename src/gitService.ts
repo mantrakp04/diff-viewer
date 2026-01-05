@@ -119,13 +119,16 @@ export class GitService {
   }
 
   async getFileDiff(branch: string, filePath: string): Promise<FileDiff> {
-    const relativePath = path.relative(this.workspaceRoot, filePath);
+    // Handle both relative and absolute paths
+    const relativePath = path.isAbsolute(filePath)
+      ? path.relative(this.workspaceRoot, filePath)
+      : filePath;
 
     try {
       // Get old content from branch
       let oldContent = '';
       try {
-        const { stdout } = await execAsync(`git show ${branch}:${relativePath}`, {
+        const { stdout } = await execAsync(`git show "${branch}:${relativePath}"`, {
           cwd: this.workspaceRoot,
           maxBuffer: 10 * 1024 * 1024,
         });
@@ -137,7 +140,7 @@ export class GitService {
       // Get current content
       let newContent = '';
       try {
-        const { stdout } = await execAsync(`git show HEAD:${relativePath}`, {
+        const { stdout } = await execAsync(`git show "HEAD:${relativePath}"`, {
           cwd: this.workspaceRoot,
           maxBuffer: 10 * 1024 * 1024,
         });
@@ -145,23 +148,35 @@ export class GitService {
       } catch {
         // File might be new, read from disk
         try {
-          const doc = await vscode.workspace.openTextDocument(filePath);
+          const fullPath = path.isAbsolute(filePath)
+            ? filePath
+            : path.join(this.workspaceRoot, filePath);
+          const doc = await vscode.workspace.openTextDocument(fullPath);
           newContent = doc.getText();
         } catch {
           newContent = '';
         }
       }
 
-      // Get unified diff
+      // Get unified diff - try both syntaxes
       let diff = '';
       try {
-        const { stdout } = await execAsync(`git diff ${branch}...HEAD -- ${relativePath}`, {
+        const { stdout } = await execAsync(`git diff "${branch}" -- "${relativePath}"`, {
           cwd: this.workspaceRoot,
           maxBuffer: 10 * 1024 * 1024,
         });
         diff = stdout;
       } catch {
-        diff = '';
+        // Try three-dot syntax as fallback
+        try {
+          const { stdout } = await execAsync(`git diff "${branch}...HEAD" -- "${relativePath}"`, {
+            cwd: this.workspaceRoot,
+            maxBuffer: 10 * 1024 * 1024,
+          });
+          diff = stdout;
+        } catch {
+          diff = '';
+        }
       }
 
       return { oldContent, newContent, diff };
