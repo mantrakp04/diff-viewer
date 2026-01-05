@@ -1,0 +1,77 @@
+{
+  "name": "diff-viewer",
+  "displayName": "Branch Diff Viewer",
+  "description": "View diff against main or any branch",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "diffViewer.diffWithMain",
+        "title": "Diff with Main Branch"
+      },
+      {
+        "command": "diffViewer.diffWithBranch",
+        "title": "Diff with Branch..."
+      },
+      {
+        "command": "diffViewer.diffFileWithMain",
+        "title": "Diff Current File with Main"
+      },
+      {
+        "command": "diffViewer.diffFileWithBranch",
+        "title": "Diff Current File with Branch..."
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "diffViewer.diffFileWithMain",
+          "group": "diffViewer"
+        },
+        {
+          "command": "diffViewer.diffFileWithBranch",
+          "group": "diffViewer"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "diffViewer.diffFileWithMain",
+          "group": "diffViewer"
+        },
+        {
+          "command": "diffViewer.diffFileWithBranch",
+          "group": "diffViewer"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Branch Diff Viewer",
+      "properties": {
+        "diffViewer.defaultBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Default branch to compare against (e.g., main, master)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
