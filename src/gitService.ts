@@ -60,7 +60,8 @@ export class GitService {
 
   async getDiffSummary(branch: string): Promise<DiffResult[]> {
     try {
-      const { stdout } = await execAsync(`git diff --numstat ${branch}...HEAD`, {
+      // Use simple diff (compares working directory to branch, no need to publish)
+      const { stdout } = await execAsync(`git diff --numstat "${branch}"`, {
         cwd: this.workspaceRoot,
       });
 
@@ -84,7 +85,7 @@ export class GitService {
       }
 
       // Get status for more accurate info
-      const { stdout: statusOutput } = await execAsync(`git diff --name-status ${branch}...HEAD`, {
+      const { stdout: statusOutput } = await execAsync(`git diff --name-status "${branch}"`, {
         cwd: this.workspaceRoot,
       });
 
@@ -187,7 +188,7 @@ export class GitService {
 
   async getAllChangedFiles(branch: string): Promise<string[]> {
     try {
-      const { stdout } = await execAsync(`git diff --name-only ${branch}...HEAD`, {
+      const { stdout } = await execAsync(`git diff --name-only "${branch}"`, {
         cwd: this.workspaceRoot,
       });
       return stdout.split('\n').filter((f) => f.trim());
