@@ -64,11 +64,6 @@
           "type": "string",
           "default": "main",
           "description": "Default branch to compare against (e.g., main, master)"
-        },
-        "diffViewer.inlineEditing": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable inline editing of diff content"
         }
       }
     }

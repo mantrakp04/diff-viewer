@@ -8,12 +8,10 @@ export class DiffPanel {
   private readonly gitService: GitService;
   private disposables: vscode.Disposable[] = [];
   private currentBranch: string = '';
-  private inlineEditingEnabled: boolean = false;
 
   private constructor(panel: vscode.WebviewPanel, gitService: GitService) {
     this.panel = panel;
     this.gitService = gitService;
-    this.inlineEditingEnabled = this.getInlineEditingSetting();
 
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
 
@@ -26,28 +24,11 @@ export class DiffPanel {
           case 'refresh':
             await this.refresh();
             break;
-          case 'toggleInlineEditing':
-            this.inlineEditingEnabled = message.enabled;
-            await this.saveInlineEditingSetting(message.enabled);
-            break;
-          case 'saveEdit':
-            await this.saveLineEdit(message.file, message.line, message.content);
-            break;
         }
       },
       null,
       this.disposables
     );
-  }
-
-  private getInlineEditingSetting(): boolean {
-    const config = vscode.workspace.getConfiguration('diffViewer');
-    return config.get<boolean>('inlineEditing', false);
-  }
-
-  private async saveInlineEditingSetting(enabled: boolean): Promise<void> {
-    const config = vscode.workspace.getConfiguration('diffViewer');
-    await config.update('inlineEditing', enabled, vscode.ConfigurationTarget.Global);
   }
 
   public static async createOrShow(gitService: GitService, branch: string): Promise<DiffPanel> {
@@ -111,25 +92,6 @@ export class DiffPanel {
     }
   }
 
-  private async saveLineEdit(filePath: string, lineNumber: number, newContent: string): Promise<void> {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders) return;
-
-    const fullPath = path.join(folders[0].uri.fsPath, filePath);
-    const uri = vscode.Uri.file(fullPath);
-
-    try {
-      const document = await vscode.workspace.openTextDocument(uri);
-      const edit = new vscode.WorkspaceEdit();
-      const line = document.lineAt(lineNumber - 1);
-      edit.replace(uri, line.range, newContent);
-      await vscode.workspace.applyEdit(edit);
-      await document.save();
-    } catch (error) {
-      vscode.window.showErrorMessage(`Could not save edit to ${filePath}:${lineNumber}`);
-    }
-  }
-
   private getLoadingHtml(): string {
     return `<!DOCTYPE html>
 <html><head><style>
@@ -145,7 +107,7 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
 
     const fileSections = fileDiffs
       .map(({ result, diff }, i) => {
-        const { inlineHtml, leftHtml, rightHtml } = this.parseDiff(diff, result.file);
+        const { inlineHtml, leftHtml, rightHtml } = this.parseDiff(diff);
         return `
         <div class="file-section" id="file-${i}">
           <div class="file-header" data-file="${this.escapeHtml(result.file)}">
@@ -259,31 +221,6 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
     }
-    .edit-toggle {
-      display: flex; align-items: center; gap: 6px;
-      cursor: pointer; font-size: 11px;
-      color: var(--vscode-foreground);
-    }
-    .edit-toggle input[type="checkbox"] {
-      width: 14px; height: 14px;
-      accent-color: var(--vscode-button-background);
-      cursor: pointer;
-    }
-    .toggle-label { user-select: none; }
-    .line-content.editable[contenteditable="true"] {
-      outline: none;
-      border-radius: 2px;
-      cursor: text;
-    }
-    .line-content.editable[contenteditable="true"]:focus {
-      background: var(--vscode-editor-selectionBackground);
-    }
-    .line-content.editable[contenteditable="true"]:hover {
-      background: rgba(255,255,255,0.05);
-    }
-    .line-content.editable.modified {
-      border-left: 2px solid var(--vscode-gitDecoration-modifiedResourceForeground, #d29922);
-    }
     .toc { flex: 1; overflow-y: auto; padding: 8px 0; }
     .toc-item {
       display: flex; align-items: center; gap: 8px;
@@ -365,10 +302,12 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     .inline-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
     .inline-view .line-num {
       display: table-cell;
-      width: 50px; min-width: 50px; padding: 0 8px;
+      width: 40px; min-width: 40px; padding: 0 4px;
       text-align: right; color: var(--vscode-editorLineNumber-foreground);
-      user-select: none; border-right: 1px solid var(--vscode-widget-border);
-      font-size: 11px; vertical-align: top;
+      user-select: none; font-size: 11px; vertical-align: top;
+    }
+    .inline-view .line-num:last-of-type {
+      border-right: 1px solid var(--vscode-widget-border);
     }
     .inline-view .line-content {
       display: table-cell;
@@ -400,12 +339,19 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     .split-view .diff-line.hunk { background: rgba(56, 139, 253, 0.1); }
     .split-view .diff-line.empty { background: rgba(128,128,128,0.05); }
     .split-view .line-num {
-      width: 45px; min-width: 45px; padding: 0 8px;
+      width: 40px; min-width: 40px; padding: 0 4px;
       text-align: right; color: var(--vscode-editorLineNumber-foreground);
       user-select: none; font-size: 11px; flex-shrink: 0;
     }
+    .split-view .line-indicator {
+      width: 16px; min-width: 16px; padding: 0 2px;
+      text-align: center; font-size: 11px; flex-shrink: 0;
+      font-weight: bold;
+    }
+    .split-view .diff-line.add .line-indicator { color: #3fb950; }
+    .split-view .diff-line.del .line-indicator { color: #f85149; }
     .split-view .line-content {
-      flex: 1; padding: 0 12px; white-space: pre;
+      flex: 1; padding: 0 8px; white-space: pre;
     }
 
     .no-diff { padding: 16px; text-align: center; color: var(--vscode-descriptionForeground); }
@@ -429,12 +375,6 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
             <button class="view-toggle active" data-view="inline">Inline</button>
             <button class="view-toggle" data-view="split">Side by Side</button>
             <button class="refresh-btn" onclick="refresh()">Refresh</button>
-          </div>
-          <div class="btn-row" style="margin-top: 6px;">
-            <label class="edit-toggle">
-              <input type="checkbox" id="inlineEditingToggle" ${this.inlineEditingEnabled ? 'checked' : ''}>
-              <span class="toggle-label">Inline Editing</span>
-            </label>
           </div>
         </div>
         <div class="toc">${tocItems}</div>
@@ -529,68 +469,12 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
     });
 
     function refresh() { vscode.postMessage({ command: 'refresh' }); }
-
-    // Inline editing toggle
-    const inlineEditingToggle = document.getElementById('inlineEditingToggle');
-    let inlineEditingEnabled = ${this.inlineEditingEnabled};
-
-    function updateEditableState() {
-      // Only make .editable elements contenteditable (right side / current version)
-      const editableElements = document.querySelectorAll('.line-content.editable');
-      editableElements.forEach(el => {
-        if (inlineEditingEnabled) {
-          el.setAttribute('contenteditable', 'true');
-          el.dataset.original = el.textContent || '';
-        } else {
-          el.removeAttribute('contenteditable');
-        }
-      });
-    }
-
-    function saveEdit(el) {
-      const file = el.dataset.file;
-      const line = parseInt(el.dataset.line, 10);
-      const content = el.textContent || '';
-      const original = el.dataset.original || '';
-
-      if (content !== original && file && line) {
-        vscode.postMessage({ command: 'saveEdit', file, line, content });
-        el.dataset.original = content;
-      }
-    }
-
-    // Initialize editable state
-    updateEditableState();
-
-    // Handle blur to save edits
-    document.addEventListener('blur', (e) => {
-      if (e.target.classList && e.target.classList.contains('editable') && inlineEditingEnabled) {
-        saveEdit(e.target);
-      }
-    }, true);
-
-    // Handle Ctrl+S to save current edit
-    document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        const focused = document.activeElement;
-        if (focused && focused.classList.contains('editable') && inlineEditingEnabled) {
-          saveEdit(focused);
-        }
-      }
-    });
-
-    inlineEditingToggle.addEventListener('change', (e) => {
-      inlineEditingEnabled = e.target.checked;
-      updateEditableState();
-      vscode.postMessage({ command: 'toggleInlineEditing', enabled: inlineEditingEnabled });
-    });
   </script>
 </body>
 </html>`;
   }
 
-  private parseDiff(diff: string, filePath: string): { inlineHtml: string; leftHtml: string; rightHtml: string } {
+  private parseDiff(diff: string): { inlineHtml: string; leftHtml: string; rightHtml: string } {
     if (!diff) return { inlineHtml: '', leftHtml: '', rightHtml: '' };
 
     const lines = diff.split('\n');
@@ -600,7 +484,6 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
 
     let oldLine = 0;
     let newLine = 0;
-    const escapedFile = this.escapeHtml(filePath);
 
     for (const line of lines) {
       if (line.startsWith('diff --git') || line.startsWith('index ') ||
@@ -618,44 +501,40 @@ body { display: flex; justify-content: center; align-items: center; height: 100v
           <span class="line-content">${this.escapeHtml(line)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
-        rightHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        leftHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
+        rightHtml += `<div class="diff-line hunk"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(line)}</span></div>`;
         continue;
       }
 
-      // Strip the +/- prefix for display, keep original for non-editable
       const contentWithoutPrefix = line.length > 0 ? line.substring(1) : '';
 
       if (line.startsWith('+')) {
-        // Added lines are editable (they exist in current version)
         inlineHtml += `<div class="diff-line add">
           <span class="line-num"></span><span class="line-num">${newLine}</span>
-          <span class="line-content editable" data-file="${escapedFile}" data-line="${newLine}">${this.escapeHtml(contentWithoutPrefix)}</span>
+          <span class="line-content">${this.escapeHtml(line)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-content"></span></div>`;
-        rightHtml += `<div class="diff-line add"><span class="line-num">${newLine}</span><span class="line-content editable" data-file="${escapedFile}" data-line="${newLine}">${this.escapeHtml(contentWithoutPrefix)}</span></div>`;
+        leftHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content"></span></div>`;
+        rightHtml += `<div class="diff-line add"><span class="line-num">${newLine}</span><span class="line-indicator">+</span><span class="line-content">${this.escapeHtml(contentWithoutPrefix)}</span></div>`;
         newLine++;
       } else if (line.startsWith('-')) {
-        // Deleted lines are NOT editable (they only exist in branch version)
         inlineHtml += `<div class="diff-line del">
           <span class="line-num">${oldLine}</span><span class="line-num"></span>
           <span class="line-content">${this.escapeHtml(line)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line del"><span class="line-num">${oldLine}</span><span class="line-content">${this.escapeHtml(contentWithoutPrefix)}</span></div>`;
-        rightHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-content"></span></div>`;
+        leftHtml += `<div class="diff-line del"><span class="line-num">${oldLine}</span><span class="line-indicator">-</span><span class="line-content">${this.escapeHtml(contentWithoutPrefix)}</span></div>`;
+        rightHtml += `<div class="diff-line empty"><span class="line-num"></span><span class="line-indicator"></span><span class="line-content"></span></div>`;
         oldLine++;
       } else if (line.length > 0) {
-        // Context lines - strip leading space, editable in current version
         const contextContent = line.startsWith(' ') ? line.substring(1) : line;
         inlineHtml += `<div class="diff-line">
           <span class="line-num">${oldLine}</span><span class="line-num">${newLine}</span>
-          <span class="line-content editable" data-file="${escapedFile}" data-line="${newLine}">${this.escapeHtml(contextContent)}</span>
+          <span class="line-content"> ${this.escapeHtml(contextContent)}</span>
         </div>`;
 
-        leftHtml += `<div class="diff-line"><span class="line-num">${oldLine}</span><span class="line-content">${this.escapeHtml(contextContent)}</span></div>`;
-        rightHtml += `<div class="diff-line"><span class="line-num">${newLine}</span><span class="line-content editable" data-file="${escapedFile}" data-line="${newLine}">${this.escapeHtml(contextContent)}</span></div>`;
+        leftHtml += `<div class="diff-line"><span class="line-num">${oldLine}</span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(contextContent)}</span></div>`;
+        rightHtml += `<div class="diff-line"><span class="line-num">${newLine}</span><span class="line-indicator"></span><span class="line-content">${this.escapeHtml(contextContent)}</span></div>`;
         oldLine++;
         newLine++;
       }
