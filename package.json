@@ -3,6 +3,11 @@
   "displayName": "Branch Diff Viewer",
   "description": "View diff against main or any branch",
   "version": "0.0.1",
+  "publisher": "mantrakp04",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mantrakp04/diff-viewer"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
